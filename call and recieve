@@ -1,0 +1,106 @@
+#include <Arduino.h>
+#include <HardwareSerial.h>
+#include <Wire.h>
+#include <TinyGsmClient.h>
+
+#define MODEM_RST        5
+#define MODEM_PWRKEY     4
+#define MODEM_POWER_ON   23
+#define MODEM_TX         27
+#define MODEM_RX         26
+#define SerialMon Serial
+#define SerialAT  Serial2
+#define LED              13
+TinyGsm modem(SerialAT);
+String simResponse = "";
+String userCommand = "";
+
+void powerOnModem() {
+  pinMode(MODEM_PWRKEY, OUTPUT);
+  pinMode(MODEM_POWER_ON, OUTPUT);
+  pinMode(MODEM_RST, OUTPUT);
+  digitalWrite(MODEM_RST, HIGH);
+  digitalWrite(MODEM_POWER_ON, HIGH);
+  delay(100);
+  digitalWrite(MODEM_PWRKEY, LOW);
+  delay(1100);
+  digitalWrite(MODEM_PWRKEY, HIGH);
+}
+void sendATCommand(const String& cmd, uint32_t wait = 500) {
+  SerialMon.print("Sending: "); SerialMon.println(cmd);
+  SerialAT.println(cmd);
+  delay(wait);
+  while (SerialAT.available()) {
+    char c = SerialAT.read();
+    simResponse += c;
+    SerialMon.write(c);
+  }
+  simResponse = "";
+}
+
+void setup() {
+  pinMode(LED, OUTPUT);
+  digitalWrite(LED, HIGH);
+
+  SerialMon.begin(115200);
+  delay(3000);
+
+  SerialMon.println("Powering on SIM800L...");
+  powerOnModem();
+  delay(3000);
+
+  SerialMon.println("Starting SerialAT...");
+  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
+  delay(3000);
+
+  SerialMon.println("Running startup AT checks...");
+  sendATCommand("AT");
+  sendATCommand("ATE0");
+  sendATCommand("AT+CSQ");
+  sendATCommand("AT+CCID");
+  sendATCommand("AT+CREG?");
+  sendATCommand("AT+CLVL=80");
+  sendATCommand("AT+CHFA=0");
+  sendATCommand("AT+CMIC=0,15");
+
+  SerialMon.println("Ready. You can make a call using ATD+<number>;");
+  SerialMon.println("Waiting for calls or commands...");
+}
+
+void checkCallStatus() {
+  SerialMon.println("\n Call status check:");
+  sendATCommand("AT+CLCC", 600);   // Current call list
+  sendATCommand("AT+CPAS", 600);   // Activity status
+}
+
+void loop() {
+  // Handle responses from SIM800
+  while (SerialAT.available()) {
+    char c = SerialAT.read();
+    simResponse += c;
+    SerialMon.write(c);
+
+    if (simResponse.indexOf("RING") >= 0) {
+      SerialMon.println("\nIncoming call detected!");
+      SerialMon.println("Type ATA to answer or ATH to reject...");
+      simResponse = "";
+    }
+  }
+
+  // Handle user input from Serial Monitor
+  while (SerialMon.available()) {
+    char c = SerialMon.read();
+    userCommand += c;
+    SerialAT.write(c);
+
+    if (c == '\n' || c == '\r') {
+      userCommand.trim();
+      if (userCommand.startsWith("ATD")) {
+        SerialMon.println("\n Outgoing call command detected.");
+        delay(3000);  // Wait a bit for call to begin
+        checkCallStatus();
+      }
+      userCommand = "";
+    }
+  }
+}
