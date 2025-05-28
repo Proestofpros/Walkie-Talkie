@@ -14,6 +14,9 @@
 #define SerialMon Serial
 #define SerialAT  Serial2
 #define LED              13
+#define BUTTON_ANSWER 14  
+#define BUTTON_HANGUP 15  
+
 
 // Display setup
 #define SCREEN_WIDTH 128
@@ -105,6 +108,9 @@ void setup() {
     SerialMon.println(F("OLED init failed"));
     while (true);
   }
+  pinMode(BUTTON_ANSWER, INPUT_PULLUP);
+  pinMode(BUTTON_HANGUP, INPUT_PULLUP);
+
 
   display.clearDisplay();
   display.setTextSize(1);
@@ -132,6 +138,21 @@ void loop() {
   while (SerialMon.available()) {
     SerialAT.write(SerialMon.read());
   }
+  // Check for button presses
+  if (digitalRead(BUTTON_ANSWER) == LOW) {  // Answer button pressed (active low)
+    delay(200);  // debounce
+    SerialMon.println("Answering call...");
+    SerialAT.println("ATA");          // Answer the call
+    SerialAT.println("AT+CHFA=1");   // Route audio to speakerphone
+    SerialAT.println("AT+CMIC=0,15"); // Set microphone gain max
+  }
+
+  if (digitalRead(BUTTON_HANGUP) == LOW) {  // Hangup button pressed (active low)
+    delay(200);  // debounce
+    SerialMon.println("Hanging up...");
+    SerialAT.println("ATH");  // Hang up the call
+  }
+
 
   // OLED update every 5 sec
   if (millis() - lastUpdate > updateInterval) {
