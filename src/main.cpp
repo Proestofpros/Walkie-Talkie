@@ -26,9 +26,9 @@ TinyGsm modem(SerialAT);
 
 // Timing
 unsigned long lastUpdate = 0;
-const unsigned long updateInterval = 500;
+const unsigned long updateInterval = 5000;
 
-// Power on sequence for SIM800L
+// Power on SIM800L
 void powerOnModem() {
   pinMode(MODEM_PWRKEY, OUTPUT);
   pinMode(MODEM_POWER_ON, OUTPUT);
@@ -41,35 +41,54 @@ void powerOnModem() {
   digitalWrite(MODEM_PWRKEY, HIGH);
 }
 
-// --- AT fallback function: get network mode ---
-String getNetworkModeText() {
-  SerialAT.println("AT+CNSMOD?");
-  delay(100);
+// Manual SIM status check
+bool isSimReady() {
+  SerialAT.println("AT+CPIN?");
+  delay(500);
+  String resp = "";
   while (SerialAT.available()) {
-    String res = SerialAT.readStringUntil('\n');
-    if (res.indexOf("+CNSMOD:") >= 0) {
-      int modeVal = res.charAt(res.length() - 2) - '0';
-      if (modeVal == 0) return "NoSrv";
-      else if (modeVal == 1) return "2G";
-      else if (modeVal == 3) return "3G";
-      else if (modeVal == 7) return "4G";
-    }
+    resp += (char)SerialAT.read();
   }
-  return "Unknown";
+  SerialMon.print("AT+CPIN? Response: ");
+  SerialMon.println(resp);
+  return resp.indexOf("READY") >= 0;
 }
 
-// --- AT fallback function: get battery level ---
+// Manual network registration check
+bool isRegistered() {
+  SerialAT.println("AT+CREG?");
+  delay(500);
+  String resp = "";
+  while (SerialAT.available()) {
+    resp += (char)SerialAT.read();
+  }
+  SerialMon.print("AT+CREG? Response: ");
+  SerialMon.println(resp);
+  return (resp.indexOf("0,1") >= 0 || resp.indexOf("0,5") >= 0);
+}
+
+// Get network mode (reuse AT+CNSMOD? parser)
+String getNetworkModeText() {
+  bool reg = isRegistered();
+  if (reg) return "2G";
+  else return "No Service";
+}
+
+// Get battery level (reuse AT+CBC parser)
 int getBatteryLevel() {
   SerialAT.println("AT+CBC");
-  delay(100);
+  delay(500);
+  String resp = "";
   while (SerialAT.available()) {
-    String res = SerialAT.readStringUntil('\n');
-    if (res.indexOf("+CBC:") >= 0) {
-      int idx1 = res.indexOf(",");
-      int idx2 = res.indexOf(",", idx1 + 1);
-      if (idx1 > 0 && idx2 > idx1) {
-        return res.substring(idx1 + 1, idx2).toInt();
-      }
+    resp += (char)SerialAT.read();
+  }
+  SerialMon.print("AT+CBC Response: ");
+  SerialMon.println(resp);
+  if (resp.indexOf("+CBC:") >= 0) {
+    int idx1 = resp.indexOf(",");
+    int idx2 = resp.indexOf(",", idx1 + 1);
+    if (idx1 > 0 && idx2 > idx1) {
+      return resp.substring(idx1 + 1, idx2).toInt();
     }
   }
   return -1;
@@ -81,7 +100,7 @@ void setup() {
   SerialMon.begin(115200);
   delay(3000);
 
-  Wire.begin(21, 22);  // SDA, SCL
+  Wire.begin(21, 22);
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
     SerialMon.println(F("OLED init failed"));
     while (true);
@@ -95,11 +114,11 @@ void setup() {
   display.display();
 
   powerOnModem();
-  delay(300);
+  delay(3000);
 
   SerialMon.println("Starting SerialAT...");
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
-  delay(300);
+  delay(3000);
 
   modem.restart();
   SerialMon.println("Modem restarted");
@@ -114,60 +133,58 @@ void loop() {
     SerialAT.write(SerialMon.read());
   }
 
-  // OLED update
+  // OLED update every 5 sec
   if (millis() - lastUpdate > updateInterval) {
     lastUpdate = millis();
 
-    int rssi = modem.getSignalQuality(); // 0–31
-    String simStatus = modem.getSimStatus() == 3 ? "READY" : "NOT READY";
+    int rssi = modem.getSignalQuality();
+    String simStatus = isSimReady() ? "READY" : "NOT READY";
     String operatorName = modem.getOperator();
     String netMode = getNetworkModeText();
-    bool reg = modem.isNetworkConnected();
+    bool reg = isRegistered();
     int batt = getBatteryLevel();
 
     int bars = map(rssi, 0, 31, 0, 5);
     bars = constrain(bars, 0, 5);
-display.clearDisplay();
 
-// ────── Signal Bars (top-left)
-for (int i = 0; i < 5; i++) {
-  int h = (i < bars) ? (2 + i * 2) : 1;
-  int y = 10 - h;
-  display.fillRect(2 + i * 6, y, 4, h, WHITE);
-}
+    display.clearDisplay();
 
-// ────── Battery Icon (top-right)
-int battX = 100, battY = 0, battH = 10, battW = 20;
-display.drawRect(battX, battY, battW, battH, WHITE);
-display.fillRect(battX + battW, battY + 3, 2, 4, WHITE);
-int battBars = map(batt, 0, 100, 0, battW - 2);
-display.fillRect(battX + 1, battY + 1, battBars, battH - 2, WHITE);
+    // Signal bars (top-left)
+    for (int i = 0; i < 5; i++) {
+      int h = (i < bars) ? (2 + i * 2) : 1;
+      int y = 10 - h;
+      display.fillRect(2 + i * 6, y, 4, h, WHITE);
+    }
 
-// ────── Text Info (below)
-display.setTextSize(1);
-display.setTextColor(WHITE);
-display.setCursor(0, 12);
-display.print("RSSI: ");
-display.print(rssi);
-display.println("/31");
+    // Battery icon (top-right)
+    int battX = 100, battY = 0, battH = 10, battW = 20;
+    display.drawRect(battX, battY, battW, battH, WHITE);
+    display.fillRect(battX + battW, battY + 3, 2, 4, WHITE);
+    int battBars = map(batt, 0, 100, 0, battW - 2);
+    display.fillRect(battX + 1, battY + 1, battBars, battH - 2, WHITE);
 
-display.setCursor(0, 22);
-display.print("SIM: ");
-display.println(simStatus);
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
 
-display.setCursor(0, 32);
-display.print("Operator: ");
-display.println(operatorName);
+    display.setCursor(0, 12);
+    display.print("RSSI: ");
+    display.print(rssi);
+    display.println("/31");
 
-display.setCursor(0, 42);
-display.print("Net: ");
-display.print(netMode);
-display.print(" | ");
-display.print(reg ? "OK" : "Fail");
+    display.setCursor(0, 22);
+    display.print("SIM: ");
+    display.println(simStatus);
 
-display.setCursor(0, 55);
-display.print("Idle");
+    display.setCursor(0, 32);
+    display.print("Operator: ");
+    display.println(operatorName);
 
-display.display();
+    display.setCursor(0, 42);
+    display.print("Net: ");
+    display.print(netMode);
+    display.print(" | ");
+    display.print(reg ? "OK" : "Fail");
+
+    display.display();
   }
 }
