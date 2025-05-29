@@ -1,3 +1,4 @@
+
 #include <Arduino.h>
 #include <HardwareSerial.h>
 #include <Wire.h>
@@ -52,8 +53,6 @@ bool isSimReady() {
   while (SerialAT.available()) {
     resp += (char)SerialAT.read();
   }
-  SerialMon.print("AT+CPIN? Response: ");
-  SerialMon.println(resp);
   return resp.indexOf("READY") >= 0;
 }
 
@@ -65,8 +64,6 @@ bool isRegistered() {
   while (SerialAT.available()) {
     resp += (char)SerialAT.read();
   }
-  SerialMon.print("AT+CREG? Response: ");
-  SerialMon.println(resp);
   return (resp.indexOf("0,1") >= 0 || resp.indexOf("0,5") >= 0);
 }
 
@@ -85,8 +82,6 @@ int getBatteryLevel() {
   while (SerialAT.available()) {
     resp += (char)SerialAT.read();
   }
-  SerialMon.print("AT+CBC Response: ");
-  SerialMon.println(resp);
   if (resp.indexOf("+CBC:") >= 0) {
     int idx1 = resp.indexOf(",");
     int idx2 = resp.indexOf(",", idx1 + 1);
@@ -142,9 +137,9 @@ void loop() {
   if (digitalRead(BUTTON_ANSWER) == LOW) {  // Answer button pressed (active low)
     delay(200);  // debounce
     SerialMon.println("Answering call...");
-    SerialAT.println("ATA");          // Answer the call
-    SerialAT.println("AT+CHFA=1");   // Route audio to speakerphone
-    SerialAT.println("AT+CMIC=0,15"); // Set microphone gain max
+    SerialAT.println("ATA");             // Answer the call
+    SerialAT.println("AT+CHFA=1");       // Set audio channel to speaker
+    SerialAT.println("AT+CMIC=0,15");;  // Set microphone gain max
   }
 
   if (digitalRead(BUTTON_HANGUP) == LOW) {  // Hangup button pressed (active low)
@@ -197,10 +192,10 @@ void loop() {
     display.println(simStatus);
 
     display.setCursor(0, 32);
-    display.print("Operator: ");
+    display.print("Operator:");
     display.println(operatorName);
 
-    display.setCursor(0, 42);
+    display.setCursor(0, 52);
     display.print("Net: ");
     display.print(netMode);
     display.print(" | ");
